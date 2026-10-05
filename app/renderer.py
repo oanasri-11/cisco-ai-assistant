@@ -1,6 +1,8 @@
 """
-Diagram generator using Graphviz
+Diagram generator using Graphviz.
+
 Converts validated network topology to visual diagrams
+using Cisco device icons.
 """
 
 import os
@@ -9,9 +11,14 @@ import tempfile
 from typing import Dict, Any, Tuple, Optional
 import logging
 
+import cairosvg
+
 logger = logging.getLogger(__name__)
 
+
 class DiagramGenerator:
+    """Generate network diagrams using Graphviz and Cisco icons."""
+
     def __init__(self, output_format: str = "png"):
         """
         Initialize diagram generator.
@@ -19,246 +26,508 @@ class DiagramGenerator:
         Args:
             output_format: Output format ('png', 'svg', 'pdf', etc.)
         """
+
         self.output_format = output_format.lower()
+
+        # Project root directory
+        self.base_dir = os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )
+
+        # Cisco SVG icons
         self.device_icons = {
-            'router': 'router.svg',
-            'switch': 'switch.svg',
-            'pc': 'pc.svg',
-            'server': 'server.svg',
-            'cloud': 'cloud.svg',
-            'firewall': 'router.svg',  # fallback
-            'loadbalancer': 'server.svg'  # fallback
+            "router": "router.svg",
+            "switch": "switch.svg",
+            "pc": "pc.svg",
         }
 
-    def generate_diagram(self, topology: Dict[str, Any],
-                        output_dir: str = "outputs",
-                        filename: str = "network_diagram") -> Tuple[bool, str, Optional[str]]:
+    def _get_icon_path(self, device_type: str) -> Optional[str]:
+        """
+        Get a PNG icon path for a device type.
+
+        Graphviz can be unreliable with SVG images,
+        so SVG icons are converted to PNG automatically.
+        """
+
+        svg_filename = self.device_icons.get(device_type)
+
+        if not svg_filename:
+            return None
+
+        assets_dir = os.path.join(
+            self.base_dir,
+            "assets",
+        )
+
+        svg_path = os.path.join(
+            assets_dir,
+            svg_filename,
+        )
+
+        if not os.path.exists(svg_path):
+            logger.warning(
+                f"Icon not found: {svg_path}"
+            )
+            return None
+
+        # PNG version
+        png_filename = os.path.splitext(
+            svg_filename
+        )[0] + ".png"
+
+        png_path = os.path.join(
+            assets_dir,
+            png_filename,
+        )
+
+        # Convert SVG → PNG if PNG does not exist
+        if not os.path.exists(png_path):
+
+            try:
+                cairosvg.svg2png(
+                    url=svg_path,
+                    write_to=png_path,
+                    output_width=64,
+                    output_height=64,
+                )
+
+                logger.info(
+                    f"Converted {svg_filename} to {png_filename}"
+                )
+
+            except Exception as e:
+
+                logger.error(
+                    f"Failed to convert {svg_filename}: {e}"
+                )
+
+                return None
+
+        return png_path
+
+    def generate_diagram(
+        self,
+        topology: Dict[str, Any],
+        output_dir: str = "outputs",
+        filename: str = "network_diagram",
+    ) -> Tuple[bool, str, Optional[str]]:
         """
         Generate diagram from network topology.
 
         Args:
-            topology: Dictionary containing devices and connections
-            output_dir: Directory to save output files
-            filename: Base filename for output (without extension)
+            topology: Dictionary containing devices and connections.
+            output_dir: Directory to save output files.
+            filename: Base filename for output.
 
         Returns:
-            Tuple of (success, message, output_file_path)
+            Tuple of:
+            (success, message, output_file_path)
         """
+
         try:
-            # Ensure output directory exists
-            os.makedirs(output_dir, exist_ok=True)
 
-            # Generate DOT language content
-            dot_content = self._generate_dot(topology)
+            # Make output directory absolute
+            if not os.path.isabs(output_dir):
+                output_dir = os.path.join(
+                    self.base_dir,
+                    output_dir,
+                )
 
-            # Save DOT file temporarily
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.dot', delete=False) as f:
+            os.makedirs(
+                output_dir,
+                exist_ok=True,
+            )
+
+            # Generate DOT content
+            dot_content = self._generate_dot(
+                topology
+            )
+
+            # Temporary DOT file
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".dot",
+                delete=False,
+                encoding="utf-8",
+            ) as f:
+
                 f.write(dot_content)
                 dot_file = f.name
 
-            # Output file path
-            output_file = os.path.join(output_dir, f"{filename}.{self.output_format}")
+            # Output file
+            output_file = os.path.join(
+                output_dir,
+                f"{filename}.{self.output_format}",
+            )
 
-            # Generate diagram using Graphviz
-            success, message = self._render_dot_to_image(dot_file, output_file)
+            # Render with Graphviz
+            success, message = (
+                self._render_dot_to_image(
+                    dot_file,
+                    output_file,
+                )
+            )
 
-            # Clean up temporary DOT file
+            # Delete temporary DOT file
             try:
                 os.unlink(dot_file)
             except OSError:
                 pass
 
             if success:
-                return True, f"Diagram generated successfully: {output_file}", output_file
-            else:
-                return False, f"Failed to generate diagram: {message}", None
+
+                return (
+                    True,
+                    f"Diagram generated successfully: {output_file}",
+                    output_file,
+                )
+
+            return (
+                False,
+                f"Failed to generate diagram: {message}",
+                None,
+            )
 
         except Exception as e:
-            logger.error(f"Error generating diagram: {e}")
-            return False, f"Error generating diagram: {str(e)}", None
 
-    def _generate_dot(self, topology: Dict[str, Any]) -> str:
+            logger.error(
+                f"Error generating diagram: {e}"
+            )
+
+            return (
+                False,
+                f"Error generating diagram: {str(e)}",
+                None,
+            )
+
+    def _generate_dot(
+        self,
+        topology: Dict[str, Any],
+    ) -> str:
         """
-        Generate DOT language representation of the topology.
-
-        Args:
-            topology: Dictionary with devices and connections
-
-        Returns:
-            DOT language string
+        Generate Graphviz DOT representation
+        using Cisco icons.
         """
+
         lines = [
             "digraph NetworkDiagram {",
-            "    rankdir=LR;",  # Left to right layout
-            "    node [shape=none];",  # We'll use images for nodes
-            "    splines=ortho;",  # Orthogonal lines for connections
-            ""
+            "    rankdir=LR;",
+            '    graph [bgcolor="white"];',
+            '    node [fontname="Arial"];',
+            '    edge [fontname="Arial"];',
+            "    splines=ortho;",
+            "",
         ]
 
-        # Add devices as nodes with images
-        for device in topology.get('devices', []):
-            device_id = device['id']
-            device_type = device.get('type', 'router')
-            label = device.get('label', device_id)
+        # --------------------------------------------------
+        # DEVICES
+        # --------------------------------------------------
 
-            # Get icon for device type
-            icon_filename = self.device_icons.get(device_type, 'router.svg')
-            icon_path = f"assets/{icon_filename}"
+        for device in topology.get(
+            "devices",
+            [],
+        ):
 
-            # Create node with image and label
-            lines.append(f'    {device_id} [')
-            lines.append(f'        label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">')
-            lines.append(f'            <TR><TD><IMG SRC="{icon_path}" SCALING="TRUE" WIDTH="32" HEIGHT="32"/></TD></TR>')
-            lines.append(f'            <TR><TD>{label}</TD></TR>')
-            lines.append(f'            <TR><TD FontSize="10">{device_type}</TD></TR>')
-            lines.append(f'        </TABLE>>;')
-            lines.append(f'        shape=none;')
-            lines.append(f'    ];')
+            device_id = device["id"]
+
+            device_type = device.get(
+                "type",
+                "router",
+            ).lower()
+
+            label = device.get(
+                "label",
+                device_id,
+            )
+
+            icon_path = self._get_icon_path(
+                device_type
+            )
+
+            safe_label = str(label).replace(
+                '"',
+                '\\"',
+            )
+
+            # If Cisco icon exists
+            if icon_path:
+
+                # Graphviz expects a path with forward slashes
+                graphviz_icon_path = icon_path.replace(
+                    "\\",
+                    "/",
+                )
+
+                lines.append(
+                    f'    "{device_id}" ['
+                )
+
+                lines.append(
+                    '        shape=none,'
+                )
+
+                lines.append(
+                    '        label=<'
+                )
+
+                lines.append(
+                    '            <TABLE '
+                    'BORDER="0" '
+                    'CELLBORDER="0" '
+                    'CELLSPACING="0">'
+                )
+
+                lines.append(
+                    f'                <TR>'
+                    f'<TD>'
+                    f'<IMG SRC="{graphviz_icon_path}" '
+                    f'WIDTH="64" '
+                    f'HEIGHT="64"/>'
+                    f'</TD>'
+                    f'</TR>'
+                )
+
+                lines.append(
+                    f'                <TR>'
+                    f'<TD>'
+                    f'{safe_label}'
+                    f'</TD>'
+                    f'</TR>'
+                )
+
+                lines.append(
+                    '            </TABLE>'
+                )
+
+                lines.append(
+                    '        >;'
+                )
+
+                lines.append(
+                    '    ];'
+                )
+
+            else:
+
+                # Fallback if icon is missing
+                lines.append(
+                    f'    "{device_id}" '
+                    f'[label="{safe_label}", '
+                    f'shape=box];'
+                )
+
             lines.append("")
 
-        # Add connections as edges
-        for i, conn in enumerate(topology.get('connections', [])):
-            source = conn['source']
-            target = conn['target']
-            label = conn.get('label', '')
-            conn_type = conn.get('type', 'ethernet')
+        # --------------------------------------------------
+        # CONNECTIONS
+        # --------------------------------------------------
 
-            # Style based on connection type
-            style = self._get_connection_style(conn_type)
+        for conn in topology.get(
+            "connections",
+            [],
+        ):
 
-            edge_label = f' [label="{label}" {style}]' if label else f' [{style}]' if style else ''
-            lines.append(f'    {source} -> {target}{edge_label};')
+            source = conn["source"]
+            target = conn["target"]
+
+            label = conn.get(
+                "label",
+                "",
+            )
+
+            conn_type = conn.get(
+                "type",
+                "ethernet",
+            )
+
+            style = self._get_connection_style(
+                conn_type
+            )
+
+            if label:
+
+                safe_label = str(label).replace(
+                    '"',
+                    '\\"',
+                )
+
+                lines.append(
+                    f'    "{source}" -> "{target}" '
+                    f'[label="{safe_label}" {style}];'
+                )
+
+            else:
+
+                lines.append(
+                    f'    "{source}" -> "{target}" '
+                    f'[{style}];'
+                )
 
         lines.append("}")
+
         return "\n".join(lines)
 
-    def _get_connection_style(self, conn_type: str) -> str:
-        """
-        Get styling for connection based on type.
+    def _get_connection_style(
+        self,
+        conn_type: str,
+    ) -> str:
+        """Get styling for connection type."""
 
-        Args:
-            conn_type: Connection type
-
-        Returns:
-            String of DOT attributes
-        """
         styles = {
-            'ethernet': 'color=blue',
-            'serial': 'color=green, style=dashed',
-            'wireless': 'color=orange, style=dotted',
-            'vpn': 'color=purple, style=bold'
+            "ethernet": "color=blue",
+            "serial": "color=green, style=dashed",
+            "wireless": "color=orange, style=dotted",
+            "vpn": "color=purple, style=bold",
         }
-        return styles.get(conn_type, 'color=black')
 
-    def _render_dot_to_image(self, dot_file: str, output_file: str) -> Tuple[bool, str]:
+        return styles.get(
+            conn_type,
+            "color=black",
+        )
+
+    def _render_dot_to_image(
+        self,
+        dot_file: str,
+        output_file: str,
+    ) -> Tuple[bool, str]:
         """
-        Render DOT file to image using Graphviz.
-
-        Args:
-            dot_file: Path to input DOT file
-            output_file: Path for output image file
-
-        Returns:
-            Tuple of (success, message)
+        Render DOT file using Graphviz.
         """
+
         try:
-            # Check if dot command is available
-            result = subprocess.run(['dot', '-V'], capture_output=True, text=True)
-            if result.returncode != 0:
-                return False, "Graphviz 'dot' command not found. Please install Graphviz."
 
-            # Render the diagram
-            cmd = [
-                'dot',
-                f'-T{self.output_format}',
-                '-o', output_file,
-                dot_file
+            # Check Graphviz
+            result = subprocess.run(
+                ["dot", "-V"],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+
+                return (
+                    False,
+                    "Graphviz 'dot' command not found. "
+                    "Make sure Graphviz is installed and in PATH.",
+                )
+
+            # Render diagram
+            command = [
+                "dot",
+                f"-T{self.output_format}",
+                "-o",
+                output_file,
+                dot_file,
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+            )
 
             if result.returncode == 0:
-                return True, "Success"
-            else:
-                error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                return False, f"Graphviz error: {error_msg}"
+
+                return (
+                    True,
+                    "Success",
+                )
+
+            error_msg = (
+                result.stderr.strip()
+                if result.stderr
+                else "Unknown Graphviz error"
+            )
+
+            return (
+                False,
+                f"Graphviz error: {error_msg}",
+            )
 
         except FileNotFoundError:
-            return False, "Graphviz 'dot' command not found. Please install Graphviz and ensure it's in PATH."
+
+            return (
+                False,
+                "Graphviz 'dot' command not found. "
+                "Install Graphviz and add it to PATH.",
+            )
+
         except Exception as e:
-            return False, f"Error running Graphviz: {str(e)}"
 
+            return (
+                False,
+                f"Error running Graphviz: {str(e)}",
+            )
+
+
+# ------------------------------------------------------
 # Convenience function
-def generate_network_diagram(topology: Dict[str, Any],
-                           output_dir: str = "outputs",
-                           filename: str = "network_diagram",
-                           output_format: str = "png") -> Tuple[bool, str, Optional[str]]:
-    """
-    Convenience function to generate network diagram.
+# ------------------------------------------------------
 
-    Args:
-        topology: Network topology dictionary
-        output_dir: Output directory
-        filename: Base filename
-        output_format: Output format
+def generate_network_diagram(
+    topology: Dict[str, Any],
+    output_dir: str = "outputs",
+    filename: str = "network_diagram",
+    output_format: str = "png",
+) -> Tuple[bool, str, Optional[str]]:
 
-    Returns:
-        Tuple of (success, message, output_file_path)
-    """
-    generator = DiagramGenerator(output_format=output_format)
-    return generator.generate_diagram(topology, output_dir, filename)
+    generator = DiagramGenerator(
+        output_format=output_format
+    )
 
-# For direct testing
+    return generator.generate_diagram(
+        topology,
+        output_dir,
+        filename,
+    )
+
+
+# ------------------------------------------------------
+# Direct testing
+# ------------------------------------------------------
+
 if __name__ == "__main__":
-    # Example topology
+
     sample_topology = {
         "devices": [
             {
                 "id": "router1",
                 "type": "router",
-                "label": "Main Router",
-                "properties": {
-                    "ip": "192.168.1.1",
-                    "hostname": "router1.example.com"
-                }
+                "label": "Router",
             },
             {
                 "id": "switch1",
                 "type": "switch",
-                "label": "Floor 1 Switch",
-                "properties": {
-                    "ip": "192.168.1.2",
-                    "hostname": "switch1.example.com"
-                }
+                "label": "Switch",
             },
             {
                 "id": "pc1",
                 "type": "pc",
-                "label": "Workstation 1",
-                "properties": {
-                    "ip": "192.168.1.10",
-                    "hostname": "ws1.example.com"
-                }
-            }
+                "label": "PC 1",
+            },
         ],
         "connections": [
             {
                 "source": "router1",
                 "target": "switch1",
-                "label": "Uplink",
-                "type": "ethernet"
+                "type": "ethernet",
             },
             {
                 "source": "switch1",
                 "target": "pc1",
-                "label": "Access Port",
-                "type": "ethernet"
-            }
-        ]
+                "type": "ethernet",
+            },
+        ],
     }
 
-    success, message, output_file = generate_network_diagram(sample_topology)
+    success, message, output_file = (
+        generate_network_diagram(
+            sample_topology
+        )
+    )
+
     print(f"Success: {success}")
     print(f"Message: {message}")
+
     if output_file:
         print(f"Output file: {output_file}")
