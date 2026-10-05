@@ -5,10 +5,20 @@ Supports Gemini and OpenAI models
 
 import os
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import logging
+from dotenv import load_dotenv
+
+from .prompts import PromptTemplates
+
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from openai import OpenAI
+    import google.generativeai as genai
 
 class LLMInterface:
     def __init__(self, provider: str = "gemini", model: Optional[str] = None):
@@ -33,7 +43,7 @@ class LLMInterface:
                 if not api_key:
                     raise ValueError("GEMINI_API_KEY not found in environment")
                 genai.configure(api_key=api_key)
-                self.model_name = self.model or "gemini-pro"
+                self.model_name = self.model or "gemini-3.8-flash"
                 self.client = genai.GenerativeModel(self.model_name)
                 logger.info(f"Initialized Gemini client with model {self.model_name}")
             except ImportError:
@@ -41,13 +51,12 @@ class LLMInterface:
                 raise
         elif self.provider == "openai":
             try:
-                import openai
+                from openai import OpenAI
                 api_key = os.getenv("OPENAI_API_KEY")
                 if not api_key:
                     raise ValueError("OPENAI_API_KEY not found in environment")
-                openai.api_key = api_key
+                self.client = OpenAI(api_key=api_key)
                 self.model_name = self.model or "gpt-3.5-turbo"
-                self.client = openai
                 logger.info(f"Initialized OpenAI client with model {self.model_name}")
             except ImportError:
                 logger.error("OpenAI package not installed")
@@ -74,50 +83,50 @@ class LLMInterface:
 
     def _generate_with_gemini(self, prompt: str) -> Dict[str, Any]:
         """Generate using Gemini model."""
-        # Enhanced prompt for structured JSON output
-        enhanced_prompt = f"""
-        You are a network topology expert. Convert the following natural language
-        network description into a structured JSON format.
-
-        The JSON should have the following structure:
-        {{
+        # Get the prompt template from prompts.py
+        prompt_template = PromptTemplates.network_topology_prompt()
+        json_structure = '''
+        {
             "devices": [
-                {{
+                {
                     "id": "unique_device_id",
                     "type": "router|switch|pc|server|cloud|firewall|loadbalancer",
                     "label": "human readable label",
-                    "position": {{"x": 0, "y": 0}},  // optional, for layout
-                    "properties": {{
+                    "position": {"x": 0, "y": 0},  // optional, for layout
+                    "properties": {
                         "ip": "ip_address",  // optional
                         "hostname": "hostname",  // optional
                         "model": "device_model",  // optional
                         "os": "operating_system"  // optional
-                    }}
-                }}
+                    }
+                }
             ],
             "connections": [
-                {{
+                {
                     "source": "device_id",
                     "target": "device_id",
                     "label": "connection_label",  // optional
                     "type": "ethernet|serial|wireless|vpn",  // optional
-                    "properties": {{
+                    "properties": {
                         "bandwidth": "1Gbps",  // optional
                         "latency": "10ms"  // optional
-                    }}
-                }}
+                    }
+                }
             ]
-        }}
-
-        Only output valid JSON. Do not include any additional text.
-
-        Network description: {prompt}
-        """
+        }
+        '''
+        enhanced_prompt = prompt_template.format(json_structure=json_structure, network_description=prompt)
 
         try:
-            response = self.client.generate_content(enhanced_prompt)
-            # Extract JSON from response
-            response_text = response.text.strip()
+            # Assert that the client is not None
+            assert self.client is not None
+            # For type checking in Gemini branch, we know it's a GenerativeModel
+            if self.provider == "gemini":
+                response = self.client.generate_content(enhanced_prompt)  # type: ignore
+                response_text = (response.text or "").strip()
+            else:
+                # This branch should not be reached due to the provider check above
+                raise ValueError(f"Unexpected provider {self.provider} in _generate_with_gemini")
 
             # Try to find JSON in the response
             if response_text.startswith("```json"):
@@ -138,57 +147,62 @@ class LLMInterface:
 
     def _generate_with_openai(self, prompt: str) -> Dict[str, Any]:
         """Generate using OpenAI model."""
-        # Enhanced prompt for structured JSON output
-        enhanced_prompt = f"""
-        You are a network topology expert. Convert the following natural language
-        network description into a structured JSON format.
-
-        The JSON should have the following structure:
-        {{
+        # Get the prompt template from prompts.py
+        prompt_template = PromptTemplates.network_topology_prompt()
+        json_structure = '''
+        {
             "devices": [
-                {{
+                {
                     "id": "unique_device_id",
                     "type": "router|switch|pc|server|cloud|firewall|loadbalancer",
                     "label": "human readable label",
-                    "position": {{"x": 0, "y": 0}},  // optional, for layout
-                    "properties": {{
+                    "position": {"x": 0, "y": 0},  // optional, for layout
+                    "properties": {
                         "ip": "ip_address",  // optional
                         "hostname": "hostname",  // optional
                         "model": "device_model",  // optional
                         "os": "operating_system"  // optional
-                    }}
-                }}
+                    }
+                }
             ],
             "connections": [
-                {{
+                {
                     "source": "device_id",
                     "target": "device_id",
                     "label": "connection_label",  // optional
                     "type": "ethernet|serial|wireless|vpn",  // optional
-                    "properties": {{
+                    "properties": {
                         "bandwidth": "1Gbps",  // optional
                         "latency": "10ms"  // optional
-                    }}
-                }}
+                    }
+                }
             ]
-        }}
-
-        Only output valid JSON. Do not include any additional text.
-
-        Network description: {prompt}
-        """
+        }
+        '''
+        enhanced_prompt = prompt_template.format(json_structure=json_structure, network_description=prompt)
 
         try:
-            response = self.client.ChatCompletion.create(
-                model=self.model_name,
-                messages=[
-                    {"role": "system", "content": "You are a network topology expert that outputs only valid JSON."},
-                    {"role": "user", "content": enhanced_prompt}
-                ],
-                temperature=0.1
-            )
+            # For OpenAI provider, we know self.client should be an OpenAI instance
+            if self.provider != "openai":
+                raise ValueError(f"Expected OpenAI provider, got {self.provider}")
 
-            response_text = response.choices[0].message.content.strip()
+            # Assert that the client is not None for type checking
+            assert self.client is not None
+            # At this point, self.client should be an OpenAI instance
+            if self.provider == "openai":
+                # We need to import OpenAI here to avoid circular imports
+                from openai import OpenAI
+                assert isinstance(self.client, OpenAI)
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": "You are a network topology expert that outputs only valid JSON."},
+                        {"role": "user", "content": enhanced_prompt}
+                    ],
+                    temperature=0.1
+                )
+
+            response_text = (response.choices[0].message.content or "").strip()
 
             # Try to find JSON in the response
             if response_text.startswith("```json"):
