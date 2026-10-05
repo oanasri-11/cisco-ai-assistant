@@ -5,14 +5,17 @@ Command Line Interface for Cisco AI Assistant
 import sys
 import argparse
 import os
+import logging
+
 from typing import Optional
-from .llm import LLMInterface, create_llm_interface
-from .schemas import NetworkTopology
+
+from dotenv import load_dotenv
+
+from .llm import create_llm_interface
 from .validator import validate_network_topology
 from .renderer import generate_network_diagram
-from .prompts import get_network_topology_prompt
-import json
-import logging
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +89,8 @@ class CLI:
 
         # Initialize LLM
         self.initialize_llm(provider=args.provider, model=args.model)
+        # Assert that llm_interface is not None for type checking
+        assert self.llm_interface is not None
 
         # Get prompt from user if not provided
         if args.prompt:
@@ -97,7 +102,7 @@ class CLI:
             print("Error: No network description provided.")
             sys.exit(1)
 
-        print("\n🔄 Processing your network description...")
+        print("\n[Processing] Processing your network description...")
 
         # Generate network topology from LLM
         try:
@@ -105,12 +110,12 @@ class CLI:
 
             # Check if LLM returned an error
             if "error" in topology_data and topology_data["error"]:
-                print(f"❌ LLM Error: {topology_data['error']}")
+                print(f"[LLM Error] {topology_data['error']}")
                 sys.exit(1)
 
         except Exception as e:
             logger.error(f"Failed to generate network topology: {e}")
-            print(f"❌ Failed to generate network topology: {e}")
+            print(f"[Error] Failed to generate network topology: {e}")
             sys.exit(1)
 
         print("✅ Network topology generated")
@@ -152,6 +157,8 @@ class CLI:
         )
 
         if success:
+            # Assert that output_file is not None for type checking
+            assert output_file is not None
             print(f"✅ {message}")
             print(f"📁 Diagram saved to: {os.path.abspath(output_file)}")
         else:
@@ -160,65 +167,40 @@ class CLI:
 
     def _generate_explanation(self, prompt: str, topology_data: dict):
         """Generate and display explanation of the network topology."""
-        try:
-            explanation_prompt = f"""
-            You are a network engineering instructor. Explain the following network
-            topology in clear, educational terms suitable for a student learning
-            networking concepts.
+        print("\n📝 Network Explanation:")
+        print("=" * 50)
 
-            Focus on:
-            - Overall network purpose and function
-            - Role of each device type
-            - How devices connect and communicate
-            - Any notable design patterns or best practices
-            - Potential improvements or considerations
+        print(f"Original description: {prompt}")
+        print(f"This network consists of {len(topology_data.get('devices', []))} device(s) and {len(topology_data.get('connections', []))} connection(s).")
 
-            Network topology JSON:
-            {json.dumps(topology_data, indent=2)}
+        devices = topology_data.get('devices', [])
+        connections = topology_data.get('connections', [])
 
-            Original description:
-            {prompt}
-            """
+        if devices:
+            print("\nDevices:")
+            for device in devices:
+                device_type = device.get('type', 'unknown')
+                label = device.get('label', device.get('id', 'unnamed'))
+                print(f"  - {label} ({device_type})")
 
-            # For now, we'll just print a simple explanation
-            # In a full implementation, we'd call the LLM with this prompt
-            print("\n📝 Network Explanation:")
-            print("=" * 50)
+                # Show properties if available
+                props = device.get('properties', {})
+                if props:
+                    prop_strs = [f"{k}: {v}" for k, v in props.items() if v]
+                    if prop_strs:
+                        print(f"    Properties: {', '.join(prop_strs)}")
 
-            devices = topology_data.get('devices', [])
-            connections = topology_data.get('connections', [])
+        if connections:
+            print("\nConnections:")
+            for conn in connections:
+                source = conn.get('source', 'unknown')
+                target = conn.get('target', 'unknown')
+                label = conn.get('label', '')
+                conn_type = conn.get('type', 'unspecified')
+                label_text = f" [{label}]" if label else ""
+                print(f"  - {source} --{label_text}--> {target} ({conn_type})")
 
-            print(f"This network consists of {len(devices)} device(s) and {len(connections)} connection(s).")
-
-            if devices:
-                print("\nDevices:")
-                for device in devices:
-                    device_type = device.get('type', 'unknown')
-                    label = device.get('label', device.get('id', 'unnamed'))
-                    print(f"  - {label} ({device_type})")
-
-                    # Show properties if available
-                    props = device.get('properties', {})
-                    if props:
-                        prop_strs = [f"{k}: {v}" for k, v in props.items() if v]
-                        if prop_strs:
-                            print(f"    Properties: {', '.join(prop_strs)}")
-
-            if connections:
-                print("\nConnections:")
-                for conn in connections:
-                    source = conn.get('source', 'unknown')
-                    target = conn.get('target', 'unknown')
-                    label = conn.get('label', '')
-                    conn_type = conn.get('type', 'unspecified')
-                    label_text = f" [{label}]" if label else ""
-                    print(f"  - {source} --{label_text}--> {target} ({conn_type})")
-
-            print("=" * 50)
-
-        except Exception as e:
-            logger.warning(f"Could not generate explanation: {e}")
-            print("⚠️  Could not generate detailed explanation")
+        print("=" * 50)
 
 def main():
     """Entry point for the CLI."""
