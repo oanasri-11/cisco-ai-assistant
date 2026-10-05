@@ -3,7 +3,7 @@ Network topology validator
 Performs logical checks on network diagrams
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from .schemas import NetworkTopology, Device, Connection
 import ipaddress
 import logging
@@ -80,7 +80,7 @@ class NetworkValidator:
         connected_devices = set()
         for conn in connections:
             connected_devices.add(conn.source)
-            connected_devics.add(conn.target)
+            connected_devices.add(conn.target)
 
         for device in devices:
             if device.id not in connected_devices:
@@ -124,21 +124,17 @@ class NetworkValidator:
                 self.errors.append(f"Self-connection detected: {conn.source} -> {conn.target}")
 
     def _check_duplicate_connections(self, connections: List[Connection]):
-        """Check for duplicate connections (same source-target pairs)."""
-        connection_map = {}  # (source, target) -> count
+        """Check for duplicate connections (same source-target pairs, treating as undirected)."""
+        connection_map = {}  # (min(source,target), max(source,target)) -> count
 
         for conn in connections:
-            key = (conn.source, conn.target)
+            # Normalize the connection so that (A,B) and (B,A) are the same key
+            key = tuple(sorted([conn.source, conn.target]))
             connection_map[key] = connection_map.get(key, 0) + 1
 
-            # Also check reverse direction for undirected nature
-            reverse_key = (conn.target, conn.source)
-            if reverse_key in connection_map:
-                connection_map[reverse_key] += 1
-
-        for (source, target), count in connection_map.items():
+        for (device1, device2), count in connection_map.items():
             if count > 1:
-                self.errors.append(f"Duplicate connection between {source} and {target}")
+                self.errors.append(f"Duplicate connection between {device1} and {device2}")
 
     def _check_invalid_connections(self, connections: List[Connection], device_ids: set):
         """Check for connections referencing non-existent devices."""
@@ -169,14 +165,14 @@ class NetworkValidator:
                     self.warnings.append(f"Potential network loop detected involving device {device}")
                     break  # Just report one warning for now
 
-    def _has_cycle_dfs(self, adj: dict, node: str, visited: set, parent: str) -> bool:
+    def _has_cycle_dfs(self, adj: dict, node: str, visited: set, parent: Optional[str]) -> bool:
         """DFS helper to detect cycles in undirected graph."""
         visited.add(node)
         for neighbor in adj.get(node, []):
             if neighbor not in visited:
                 if self._has_cycle_dfs(adj, neighbor, visited, node):
                     return True
-            elif neighbor != parent:
+            elif parent is not None and neighbor != parent:
                 return True
         return False
 
