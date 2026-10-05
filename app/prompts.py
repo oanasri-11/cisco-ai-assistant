@@ -15,36 +15,11 @@ class PromptTemplates:
         network description into a structured JSON format.
 
         The JSON should have the following structure:
-        {
-            "devices": [
-                {
-                    "id": "unique_device_id",
-                    "type": "router|switch|pc|server|cloud|firewall|loadbalancer",
-                    "label": "human readable label",
-                    "position": {"x": 0, "y": 0},  // optional, for layout
-                    "properties": {
-                        "ip": "ip_address",  // optional
-                        "hostname": "hostname",  // optional
-                        "model": "device_model",  // optional
-                        "os": "operating_system"  // optional
-                    }
-                }
-            ],
-            "connections": [
-                {
-                    "source": "device_id",
-                    "target": "device_id",
-                    "label": "connection_label",  // optional
-                    "type": "ethernet|serial|wireless|vpn",  // optional
-                    "properties": {
-                        "bandwidth": "1Gbps",  // optional
-                        "latency": "10ms"  // optional
-                    }
-                }
-            ]
-        }}
+        {json_structure}
 
         Only output valid JSON. Do not include any additional text.
+
+        Network description: {network_description}
         """
 
     @staticmethod
